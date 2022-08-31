@@ -1,0 +1,13 @@
+{
+  "name": "DIN66348",
+  "apiVersion": "1.0.0",
+  "author": "Stefan Seegel",
+  "version": "1.0.0",
+  "description": "HLA for DIN 66348 measurement bus",
+  "extensions": {
+    "DIN66348": {
+      "type": "HighLevelAnalyzer",
+      "entryPoint": "HighLevelAnalyzer.Hla"
+    }
+  }
+}
