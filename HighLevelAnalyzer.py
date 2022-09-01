@@ -36,7 +36,7 @@ ROLE_SLAVE = 1
 
 TK_JOB_REQ = '0'        # Auftragsbearbeitung Anforderungstelegram
 TK_JOB_REP = '1'        # Auftragsbearbeitung Antwortstelegram
-TK_EVENT = '3'          # Eregnis Meldungstelegram
+TK_EVENT = '3'          # Ereignis Meldungstelegram
 TK_CONNECT_REQ  = '8'   # Verbindungsaufbau Anforderungstelegram
 TK_CONNECT_REP  = '9'   # Verbindungsaufbau Antwortstelegram
 TK_CONNECT_ERR = 'A'    # Verbinidungsaufbau Fehlertelegramm
@@ -56,6 +56,11 @@ class DataBlock:
     def __init__(self, payload, bcc):
         self.payload = payload
         self.bccok = False
+
+        self.vn = ''
+        dc4pos = payload.find(DC4)
+        if (dc4pos >= 0):
+            self.vn = payload[dc4pos + 1] + payload[dc4pos + 2]
 
     def parse(self, vn, data):
         tk = data[0] #Telegrammtypkennung
@@ -127,14 +132,9 @@ class DataBlock:
         return data
 
     def __str__(self):
-        vn = None
-        dc4pos = self.payload.find(DC4)
-        if (dc4pos >= 0):
-            vn = self.payload[dc4pos + 1] + self.payload[dc4pos + 2]
-
         dc2pos = self.payload.find(DC2)
         if dc2pos >= 0:
-            return self.parse(vn, self.payload[dc2pos+1:-1])
+            return self.parse(self.vn, self.payload[dc2pos+1:-1])
         
         s = ""
         for c in self.payload:
@@ -175,16 +175,16 @@ class Hla(HighLevelAnalyzer):
         '''
         Process a frame from the input analyzer, and optionally return a single `AnalyzerFrame` or a list of `AnalyzerFrame`s.
         '''
-        
+
         result = None
         
         c = chr(frame.data['data'][0])
         
         if self.state == STATE_BCC: #receive BCC
-            print("BUF: " + self.databuf)
+            print(self.databuf)
             datablock = DataBlock(self.databuf, c)
             self.state = STATE_IDLE
-            result = AnalyzerFrame('Data', self.stx_start_time, frame.end_time, {'Info': str(datablock), 'Adr': str(self.address)})
+            result = AnalyzerFrame('Data', self.stx_start_time, frame.end_time, {'Info': str(datablock), 'Adr': str(self.address), 'VN': datablock.vn})
             
         elif self.state == STATE_DLE: #receive DLE byte
             result = AnalyzerFrame('Ctrl', self.last_char_start_time, frame.end_time, {'Info': 'DLE ' + c})
