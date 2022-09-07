@@ -51,6 +51,37 @@ DK_IDENTIFICATOIN = '02'
 DK_VAR_READ = '04'
 DK_VAR_WRITE = '05'
 
+# splits telegramparts with dividers RS, GS, US
+class TelegramSplitter:
+    def __init__(self, data):
+        self.data = data
+
+    def get_group(self, groupindex = 0):
+        groups = self.data.split(GS)
+        if groupindex >= len(groups):
+            return ""
+        return groups[groupindex]
+        
+    def get_rows(self, groupindex = 0):
+        return self.get_group(groupindex).split(RS)
+
+    def get_row(self, rowindex = 0, groupindex = 0):
+        rows = self.get_rows(groupindex)
+        if rowindex >= len(rows):
+            return ""
+        return rows[rowindex]
+
+    # return all units as array
+    def get_units(self, rowindex = 0, groupindex = 0):
+        return self.get_row(rowindex, groupindex).split(US)
+            
+    def get_unit(self, unitindex = 0, rowindex = 0, groupindex = 0):
+        units = self.get_units(rowindex, groupindex)
+        if unitindex >= len(units):
+            return ""
+        return units[unitindex]
+
+
 # DIN Protocol parser for application data
 class DataBlock:
     def __init__(self, payload, bcc):
@@ -71,54 +102,108 @@ class DataBlock:
             params = data[4:]
             if dk == DK_STATUS:
                 return f'Job req status {params}'
+            
             if dk == DK_NAMELIST:
-                return f'Job req namelist {params}'
+                params = TelegramSplitter(params)
+                unit0 = params.get_unit(0)
+                eok = unit0[0]
+                temp = ""
+                if eok == '0':
+                    temp = f'OK "{unit0[1]}"'
+                else:
+                    temp = f'ZOK "{unit0[1:]}"'
+
+                unit1 = params.get_unit(1)
+                ob = unit1[0]
+                temp += f', OB "{ob}"'
+
+                sb = unit1[1:]
+                if len(sb) > 0:
+                    temp += f', SB "{sb}"'
+
+                fh = params.get_unit(2)
+                if fh != "":
+                    temp += f', FH "{fh}"'
+
+                return f'Job req namelist EOK "{eok}", ' + temp
+
             elif dk == DK_IDENTIFICATOIN:
                 return 'Job req ID'
+
             elif dk == DK_VAR_READ:
-                return f'Job req read var {params}'
+                za = params[0]
+                tmp = "?"
+                if za == '0':
+                    params = TelegramSplitter(params[1:])
+                    tmp = ', '.join(params.get_rows())
+                elif za == '1':
+                    tmp = params[1:]
+                return f'Job req read var ZA {za}, {tmp}'
+
             elif dk == DK_VAR_WRITE:
-                return f'Job req write var {params}'
+                za = params[0]
+                tmp = '?'
+                if za == '0':
+                    params = TelegramSplitter(params[1:])
+                    tmp = 'names ' + ', '.join(params.get_rows())
+                    tmp += ', values ' + ', '.join(params.get_units(0, 1))
+                elif za == '1':
+                    tmp = params[1:]
+                return f'Job req write var ZA {za}, {tmp}'
 
         elif tk == TK_JOB_REP:
             an = data[1] # Auftragsnummer
             dk = data[2] + data[3] # Dienstkennungszeichen 1 & 2
             params = data[4:]
+
             if dk == DK_STATUS:
-                return f'Job rep status {params}'
+                return f'Job rep status "{params}"'
+
             elif dk == DK_NAMELIST:
-                return f'Job rep namelist {params}'
+                params = TelegramSplitter(params)
+                varlist = ', '.join(params.get_units(0))
+                return f'Job rep namelist: {varlist}'
+                
             elif dk == DK_IDENTIFICATOIN:
-                return f'Job rep ID {data[4:]}'
+                params = TelegramSplitter(params)
+                return f'Job rep ID HN "{params.get_unit(0)}", MN "{params.get_unit(1)}", version "{params.get_unit(2)}"'
+
             elif dk == DK_VAR_READ:
-                return f'Job rep read var {params}'
+                params = TelegramSplitter(params)
+                list = ', '.join(params.get_units())
+                return f'Job rep read var "{list}"'
+
             elif dk == DK_VAR_WRITE:
-                return f'Job rep write var {params}'
+                return f'Job rep write var "{params}"'
 
         elif tk == TK_EVENT:
             dk3 = data[1]
             if dk3 == '0':
-                return f'Event report {data[2:]}'
+                return f'Event report "{data[2:]}"'
             if dk3 == '1':
-                return f'Event status {data[2:]}'
+                return f'Event status "{data[2:]}"'
 
         elif tk == TK_CONNECT_REQ:
-            sp = data[1:].split(US)
-            called = sp[0]
-            caller = sp[1]
-            odrv = ord(sp[2][0]) - 0x40
-            odgv = ord(sp[2][1]) - 0x40
-            version = sp[2][2:]
-            return f'Connect req VN {vn} {caller} - {called} version {version}'
+            params = TelegramSplitter(data[1:])
+            called = params.get_unit(0)
+            caller = params.get_unit(1)
+            unit2 = params.get_unit(2)
+            odrv = ord(unit2[0]) - 0x40
+            odgv = ord(unit2[1]) - 0x40
+            version = unit2[2:]
+            return f'Connect req, VN "{vn}", "{caller}" -> "{called}", ODRV {odrv}, ODGV {odgv}, version "{version}"'
 
         elif tk == TK_CONNECT_REP:
             odrf = ord(data[1]) - 0x40
             odgf = ord(data[2]) - 0x40
             version = data[3:]
-            return f'Connect rep VN {vn} version {version}'
+            return f'Connect rep, VN "{vn}", ODRF {odrf}, ODGF {odgf}, version "{version}"'
 
         elif tk == TK_CONNECT_ERR:
             return 'Connect error'
+
+        elif tk == TK_CONNECTION_ABORT:
+            return 'Connect abort'
 
         elif tk == TK_DISCONNECT_REQ:
             return 'Disconnect req'
@@ -152,7 +237,7 @@ class Hla(HighLevelAnalyzer):
     # An optional list of types this analyzer produces, providing a way to customize the way frames are displayed in Logic 2.
     result_types = {
         'Data': {
-            'format': '{{data.Info}}'
+            'format': '{{{data.Info}}}'
         },
         'Ctrl': {
             'format': '{{data.Info}}'
